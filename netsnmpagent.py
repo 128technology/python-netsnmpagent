@@ -372,17 +372,16 @@ class netsnmpAgent(object):
 		# Initialize our SNMP object registry
 		self._objs = defaultdict(dict)
 
-	def _prepareRegistration(self, oidstr, writable = True):
-		""" Prepares the registration of an SNMP object.
+	def determine_oid_and_length(self, oidstr):
+		"""
+		Determine the OID based on either interpreting
+			"oidstr" is the OID to determie. This can be either dot notation
+			or as a fully qualified MIB string, eg:
+				".1.3.6.1.2.1.2.2.1.1" or
+				"IF-MIB::ifIndex"
 
-		    "oidstr" is the OID to register the object at.
-		    "writable" indicates whether "snmpset" is allowed. """
-
-		# Make sure the agent has not been start()ed yet
-		if self._status != netsnmpAgentStatus.REGISTRATION:
-			raise netsnmpAgentException("Attempt to register SNMP object " \
-			                            "after agent has been started!")
-
+			Returns: tuple(oid, oid_len)
+		"""
 		if self.UseMIBFiles:
 			# We can't know the length of the internal OID representation
 			# beforehand, so we use a MAX_OID_LEN sized buffer for the call to
@@ -400,12 +399,26 @@ class netsnmpAgent(object):
 		else:
 			# Interpret the given oidstr as the oid itself.
 			try:
-				parts = [c_oid(long(x) if sys.version_info <= (3,) else int(x)) for x in oidstr.split('.')]
+				parts = [c_oid(long(x) if sys.version_info <= (3,) else int(x)) for x in oidstr.strip('.').split('.')]
 			except ValueError:
 				raise netsnmpAgentException("Invalid OID (not using MIB): {0}".format(oidstr))
 
 			oid = (c_oid * len(parts))(*parts)
 			oid_len = ctypes.c_size_t(len(parts))
+		return (oid, oid_len)
+
+	def _prepareRegistration(self, oidstr, writable = True):
+		""" Prepares the registration of an SNMP object.
+
+		    "oidstr" is the OID to register the object at.
+		    "writable" indicates whether "snmpset" is allowed. """
+
+		# Make sure the agent has not been start()ed yet
+		if self._status != netsnmpAgentStatus.REGISTRATION:
+			raise netsnmpAgentException("Attempt to register SNMP object " \
+			                            "after agent has been started!")
+
+		oid, oid_len = self.determine_oid_and_length(oidstr)
 
 		# Do we allow SNMP SETting to this OID?
 		handler_modes = HANDLER_CAN_RWRITE if writable \
@@ -561,7 +574,7 @@ class netsnmpAgent(object):
 					elif self.__class__.__name__ == 'Gauge32' and val >> 32:
 						val = 0xFFFFFFFF
 					self._cvar.value = val
-					if props["flags"] == WATCHER_MAX_SIZE:
+					if props["flags"] & WATCHER_MAX_SIZE == WATCHER_MAX_SIZE:
 						if len(val) > self._max_size:
 							raise netsnmpAgentException(
 								"Value passed to update() truncated: {0} > {1} "
@@ -678,6 +691,83 @@ class netsnmpAgent(object):
 			"initval"       : "",
 			"asntype"       : ASN_OCTET_STR
 		}
+
+	# ObjectIdentifier represents SNMP OBJECT IDENTIFIERS
+	# The expected value syntax is dot notation string,
+	#   eg: ".1.3.6.1.2.1.2.2.1.1"
+	# or alternatively if MIB support is enabled the fully qualified MIB value,
+	#   eg: "IF-MIB::ifIndex"
+	def ObjectIdentifier(self, initval = None, oidstr = None, writable = False, context = "", callback = None):
+		agent = self
+
+		class ObjectIdentifier(object):
+			def __init__(self):
+				self._flags     = WATCHER_MAX_SIZE & WATCHER_SIZE_UNIT_OIDS
+				self._asntype   = ASN_OBJECT_ID
+				self._max_size  = MAX_OID_LEN * ctypes.sizeof(c_oid)
+				self._set_oid_value(initval)
+
+				if oidstr:
+					# Prepare the netsnmp_handler_registration structure.
+					self._callback_handler = None
+					if callback != None:
+						# We defined a Python function that needs a ctypes conversion so it can
+						# be called by C code such as net-snmp. That's what SNMPNodeHandler() is
+						# used for. However we also need to store the reference in "self" as it
+						# will otherwise be lost at the exit of this function so that net-snmp's
+						# attempt to call it would end in nirvana...
+						self._callback_handler = _build_callback_handler(callback)
+
+					handler_reginfo = agent._prepareRegistration(oidstr, writable)
+					handler_reginfo.contents.contextName = b(context)
+
+					# Create the netsnmp_watcher_info structure.
+					watcher = libnsX.netsnmp_create_watcher_info(
+						self.cref(),
+						self._data_size,
+						self._asntype,
+						self._flags
+					)
+					watcher._maxsize = self._max_size
+
+					# Register handler and watcher with net-snmp.
+					result = libnsX.netsnmp_register_watched_instance(
+						handler_reginfo,
+						watcher
+					)
+					if result != 0:
+						raise netsnmpAgentException("Error registering variable with net-snmp!")
+
+					if self._callback_handler is not None:
+						_inject_custom_handler(self._callback_handler, handler_reginfo)
+
+					# Finally, we keep track of all registered SNMP objects for the
+					# getRegistered() method.
+					agent._objs[context][oidstr] = self
+
+			def _set_oid_value(self, oid_value):
+				if oid_value is not None:
+					oid, oid_len = agent.determine_oid_and_length(oid_value)
+					self._object_id = oid
+					self._cvar      = self._object_id
+					self._data_size = oid_len.value * ctypes.sizeof(c_oid)
+				else:
+					self._object_id = (c_oid * 0)()
+					self._cvar      = self._object_id
+					self._data_size = 0
+
+			def value(self):
+				return "." + ".".join([str(oid) for oid in self._object_id])
+
+			def cref(self, **kwargs):
+				return ctypes.byref(self._cvar)
+
+			def update(self, val):
+				raise NotImplementedError("ObjectIdentifier type does not currently support update!")
+
+		# Return an instance of the just-defined class to the agent
+		return ObjectIdentifier()
+
 
 	# IP addresses are stored as unsigned integers, but the Python interface
 	# should use strings. So we need a special class.
@@ -970,6 +1060,7 @@ class netsnmpAgent(object):
 
 					asntypes = {
 						ASN_INTEGER:    "Integer",
+						ASN_OBJECT_ID:  "ObjectIdentifier",
 						ASN_OCTET_STR:  "OctetString",
 						ASN_IPADDRESS:  "IPAddress",
 						ASN_COUNTER:    "Counter32",
