@@ -340,6 +340,7 @@ for f in [ libnsa.netsnmp_request_set_error ]:
 # include/net-snmp/library/asn1.h
 ASN_INTEGER                             = 0x02
 ASN_OCTET_STR                           = 0x04
+ASN_OBJECT_ID                           = 0x06
 ASN_OPAQUE_TAG2                         = 0x30
 ASN_APPLICATION                         = 0x40
 # opaque special types
@@ -360,6 +361,7 @@ ASN_DOUBLE                              = ASN_APPLICATION | 9
 # include/net-snmp/agent/watcher.h
 WATCHER_FIXED_SIZE                      = 0x01
 WATCHER_MAX_SIZE                        = 0x02
+WATCHER_SIZE_UNIT_OIDS                  = 0x10
 
 class netsnmp_watcher_info(ctypes.Structure): pass
 netsnmp_watcher_info_p = ctypes.POINTER(netsnmp_watcher_info)
