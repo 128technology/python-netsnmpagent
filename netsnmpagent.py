@@ -415,7 +415,7 @@ class netsnmpAgent(object):
 
 		# Make sure the agent has not been start()ed yet
 		if self._status != netsnmpAgentStatus.REGISTRATION:
-			raise netsnmpAgentException("Attempt to register SNMP object " \
+			raise netsnmpAgentException("Attempt to register SNMP object "
 			                            "after agent has been started!")
 
 		oid, oid_len = self.determine_oid_and_length(oidstr)
@@ -759,7 +759,7 @@ class netsnmpAgent(object):
 			def value(self):
 				return "." + ".".join([str(oid) for oid in self._object_id])
 
-			def cref(self, **kwargs):
+			def cref(self):
 				return ctypes.byref(self._cvar)
 
 			def update(self, val):
