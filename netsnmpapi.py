@@ -536,6 +536,9 @@ for f in [ libnsa.agent_check_and_process ]:
 	]
 	f.restype = ctypes.c_int
 
+for f in [ libnsa.netsnmp_get_agent_uptime ]:
+	f.restype = ctypes.c_ulong
+
 MODE_GET                                = 160 # SNMP_MSG_GET
 MODE_GET_NEXT                           = 161 # SNMP_MSG_GET_NEXT
 MODE_SET_BEGIN                          = -1  # SNMP_MSG_INTERNAL_SET_BEGIN

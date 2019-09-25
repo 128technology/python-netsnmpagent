@@ -1210,6 +1210,12 @@ class netsnmpAgent(object):
 			}
 		return dict(myobjs)
 
+	def get_agent_uptime(self):
+		"""
+		Get the sysUpTime from the agent
+		"""
+		return libnsa.netsnmp_get_agent_uptime()
+
 	def start(self):
 		""" Starts the agent. Among other things, this means connecting
 		    to the master agent, if configured that way. """
